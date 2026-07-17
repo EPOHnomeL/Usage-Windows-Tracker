@@ -1,32 +1,48 @@
-"""The 'Account & Usage' details window (tkinter, dark theme).
+"""The 'Account & Usage' details window (tkinter), styled with Yknot branding.
 
 Mirrors the layout of Claude Code's /usage panel: an Account section and a
-Usage section with a coloured progress bar and reset countdown per limit.
+Usage section with a coloured progress bar and reset countdown per limit, plus
+the Yknot logo and a link to the company usage dashboard.
 
 Tkinter is single-threaded: this window must only be created and updated from
-the same (main) thread that owns the Tk root. tray_app funnels all updates here
-via the main-thread queue pump.
+the same (main) thread that owns the Tk root.
 """
 from __future__ import annotations
 
-import platform
+import os
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 
+import fonts
 from account import Account
 from icon import _bar_color
 from usage_client import Usage
 
-BG = "#16181d"
-CARD = "#1e2128"
-TRACK = "#2a2e37"
-TEXT = "#e8e8ea"
-MUTED = "#8a8f98"
-HEADING = "#6f757e"
+# ---- Yknot brand palette (light mode, matching y-knot.io) --------------
+NAVY = "#2e3252"        # brand navy (logo cube + wordmark) — primary text
+TEAL = "#3f9fb0"        # brand teal accent
+TEAL_HOVER = "#33808e"
+NAVY_HOVER = "#3c4168"
+SAND = "#e0c0a0"        # rope highlight
 
-# Use each platform's native UI font; Tk falls back gracefully if absent.
-_SYSTEM = platform.system()
-FONT = {"Windows": "Segoe UI", "Darwin": "Helvetica Neue"}.get(_SYSTEM, "DejaVu Sans")
+BG = "#f5f7fa"          # light page background
+CARD = "#ffffff"        # white surfaces
+TRACK = "#e4e8ee"       # progress-bar track
+TEXT = NAVY             # primary text in brand navy
+MUTED = "#6b7280"       # secondary text
+HEADING = TEAL          # section headers in brand teal
+BORDER = "#e2e6ec"
+
+# Company usage dashboard linked from the window.
+DASHBOARD_URL = "https://claude-ussage.vercel.app/"
+_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "assets", "Yknot_landscape_smooth_Logo.PNG")
+
+# Register bundled Inter (y-knot.io's font) and pick the family names.
+fonts.register()
+FONT = fonts.UI_FAMILY          # body / labels
+FONT_DISPLAY = fonts.DISPLAY_FAMILY  # title / logo wordmark feel
 
 
 def _hex(rgb: tuple[int, int, int]) -> str:
@@ -41,7 +57,27 @@ class DetailsWindow:
         self._win: tk.Toplevel | None = None
         self._body: tk.Frame | None = None
         self._footer_label: tk.Label | None = None
+        self._logo_img = None  # keep a ref or Tk garbage-collects the image
         self._last: tuple = ()  # cache so we can rerender on show
+
+    # ---- branding -------------------------------------------------------
+    def _load_logo(self, target_w: int = 200):
+        """Return a Tk image of the Yknot logo on the light page background."""
+        if self._logo_img is not None:
+            return self._logo_img
+        try:
+            from PIL import Image, ImageColor, ImageTk
+            logo = Image.open(_LOGO_PATH).convert("RGBA")
+            scale = target_w / logo.width
+            logo = logo.resize((target_w, max(1, round(logo.height * scale))),
+                               Image.LANCZOS)
+            # Composite onto the page colour so anti-aliased edges blend in.
+            bg = Image.new("RGBA", logo.size, ImageColor.getrgb(BG) + (255,))
+            bg.alpha_composite(logo)
+            self._logo_img = ImageTk.PhotoImage(bg)
+        except Exception:
+            self._logo_img = None
+        return self._logo_img
 
     # ---- lifecycle ------------------------------------------------------
     def _ensure(self) -> None:
@@ -57,24 +93,45 @@ class DetailsWindow:
         except tk.TclError:
             pass
 
-        # Title bar row
+        # Branded header: Yknot logo directly on the light background.
+        logo = self._load_logo()
+        if logo is not None:
+            header = tk.Frame(win, bg=BG)
+            header.pack(fill="x", padx=18, pady=(16, 6))
+            tk.Label(header, image=logo, bg=BG).pack(side="left")
+
+        # Title + teal accent rule
         top = tk.Frame(win, bg=BG)
-        top.pack(fill="x", padx=18, pady=(16, 4))
-        tk.Label(top, text="Account & Usage", bg=BG, fg=TEXT,
-                 font=(FONT, 14, "bold")).pack(side="left")
+        top.pack(fill="x", padx=18, pady=(6, 2))
+        tk.Label(top, text="Account & Usage", bg=BG, fg=NAVY,
+                 font=(FONT_DISPLAY, 15, "bold")).pack(side="left")
+        tk.Frame(win, bg=TEAL, height=2).pack(fill="x", padx=18, pady=(5, 2))
 
         self._body = tk.Frame(win, bg=BG)
-        self._body.pack(fill="both", expand=True, padx=18, pady=(4, 8))
+        self._body.pack(fill="both", expand=True, padx=18, pady=(4, 6))
+
+        # Dashboard link (teal, opens the company usage tracker in a browser).
+        link_row = tk.Frame(win, bg=BG)
+        link_row.pack(fill="x", padx=18, pady=(0, 2))
+        link = tk.Label(link_row, text="↗  Open Yknot usage dashboard",
+                        bg=BG, fg=TEAL, font=(FONT, 9, "underline"),
+                        cursor="hand2")
+        link.pack(side="left")
+        link.bind("<Button-1>", lambda _e: webbrowser.open(DASHBOARD_URL))
+        link.bind("<Enter>", lambda _e: link.config(fg=TEAL_HOVER))
+        link.bind("<Leave>", lambda _e: link.config(fg=TEAL))
 
         footer = tk.Frame(win, bg=BG)
-        footer.pack(fill="x", padx=18, pady=(0, 14))
+        footer.pack(fill="x", padx=18, pady=(2, 14))
         self._footer_label = tk.Label(footer, text="", bg=BG, fg=MUTED,
                                       font=(FONT, 8))
         self._footer_label.pack(side="left")
-        btn = tk.Label(footer, text="Refresh now", bg=CARD, fg=TEXT,
-                       font=(FONT, 9), padx=12, pady=5, cursor="hand2")
+        btn = tk.Label(footer, text="Refresh now", bg=NAVY, fg="white",
+                       font=(FONT, 9, "bold"), padx=14, pady=6, cursor="hand2")
         btn.pack(side="right")
         btn.bind("<Button-1>", lambda _e: self._on_refresh())
+        btn.bind("<Enter>", lambda _e: btn.config(bg=NAVY_HOVER))
+        btn.bind("<Leave>", lambda _e: btn.config(bg=NAVY))
 
         self._win = win
 
