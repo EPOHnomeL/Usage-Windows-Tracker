@@ -1,42 +1,59 @@
-# Claude Usage Tracker (Windows tray)
+# Claude Usage Tracker (Windows / macOS / Linux)
 
-A tiny system-tray app that shows your **Claude subscription session usage** as a
-live percentage bar next to the Windows clock — the same "Session (5-hour)"
-number that Claude Code's `/usage` command and claude.ai show. Hover for the
-exact figure and reset time; **double-click for a full Account & Usage window**.
+A tiny system-tray / menu-bar app that shows your **Claude subscription session
+usage** as a live percentage bar — the same "Session (5-hour)" number that
+Claude Code's `/usage` command and claude.ai show. Hover for the exact figure
+and reset time; **click Show details for a full Account & Usage window**.
 
 ![tray icon examples](_preview/icon_78.png)
 ![details window](_preview/window.png)
 
+One Python codebase runs on all three platforms; only the credential source and
+the launchers differ per OS (details below).
+
 ## Details window
 
-Double-click the tray icon (or right-click → **Show details…**) to open an
-Account & Usage panel styled like Claude Code's `/usage`:
+Right-click the tray icon → **Show details…** (also the default click action) to
+open an Account & Usage panel styled like Claude Code's `/usage`:
 
 - **Account** — auth method, email, organization, and plan (read locally from
   `~/.claude.json`, no network call).
 - **Usage** — every limit (Session 5-hour, Weekly all-models, Weekly per-model)
   with a coloured progress bar and a reset countdown.
-- **Refresh now** button and a "last updated" timestamp. The window updates
-  live on each poll while it's open.
+- **Refresh now** button; the window also auto-refreshes every 60s while open.
+
+The window runs as its own process, which keeps the tray icon rock-solid across
+all three platforms (pystray and tkinter both want the main thread — separating
+them avoids that conflict, notably on macOS).
 
 > Not (yet) included: the "What's contributing to your limits usage?" breakdown
 > from `/usage`. That's analytics Claude Code computes from your local session
-> logs using its own heuristics; reproducing it faithfully is a separate piece
-> of work. Ask if you'd like an approximate version added.
+> logs using its own heuristics; reproducing it faithfully is separate work.
+> Ask if you'd like an approximate version added.
 
 ## How it works
 
-- Reads your existing Claude sign-in token from `%USERPROFILE%\.claude\.credentials.json`
-  (the token Claude Code already stores — **no separate login needed**).
+- Reads your existing Claude sign-in token (see per-OS locations below) — the
+  token Claude Code already stores, so **no separate login needed**.
 - Every 5 minutes it calls Anthropic's usage endpoint
-  (`GET https://api.anthropic.com/api/oauth/usage`) and redraws the tray icon.
+  (`GET https://api.anthropic.com/api/oauth/usage`) and redraws the icon.
 - Refreshes the access token automatically when it expires.
 - The colour shifts green → amber → orange → red as you approach your limit.
 
 Your token is only ever sent to Anthropic's own hosts (`api.anthropic.com` /
 `platform.claude.com`) — the same ones Claude Code uses. Nothing is stored or
 sent anywhere else.
+
+**Credential source per OS:**
+
+| OS | Where the token is read from |
+|----|------------------------------|
+| Windows | `%USERPROFILE%\.claude\.credentials.json` |
+| Linux | `~/.claude/.credentials.json` |
+| macOS | login **Keychain** item `Claude Code-credentials` (via `security`) |
+
+On macOS the app never writes to the Keychain — if a token needs refreshing it
+does so in memory for that run, leaving Claude Code's Keychain item untouched.
 
 ## ⚠️ Please read: terms-of-service note
 
@@ -46,78 +63,108 @@ against the consumer Terms of Service. This app is a personal, **read-only**
 monitor of *your own* account and polls infrequently (default every 5 min) to
 stay gentle — but be aware:
 
-- The `/api/oauth/usage` endpoint is **undocumented** and could change or break
-  without notice.
+- The `/api/oauth/usage` endpoint is **undocumented** and could change or break.
 - There is a real (if small) risk that using tokens outside official clients
   could flag your account.
 
-Use at your own discretion. You can raise `POLL_SECONDS` in `tray_app.py` to be
-even more conservative.
+Use at your own discretion. Raise `POLL_SECONDS` in `tray_app.py` to be even
+more conservative.
 
-## Requirements
+## Common requirements
 
-- Windows
-- Python 3.9+ (`py --version`)
-- You must be signed in to Claude Code with a **Pro/Max subscription** login
-  (not an API key). If `claude` works in your terminal, you're set.
+- Python 3.9+
+- Signed in to Claude Code with a **Pro/Max subscription** login (not an API
+  key). If `claude` works in your terminal, you're set.
+- Tkinter (for the details window) — bundled with Python on Windows/macOS;
+  on Linux install `python3-tk`.
 
-## Setup
+---
 
-From this folder:
+## Windows
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Run
+- **Run:** double-click `start-tracker.vbs` (no console window). Or
+  `.\.venv\Scripts\python.exe tray_app.py` from a terminal.
+- **Start at login:** `powershell -ExecutionPolicy Bypass -File install-startup.ps1`
+  (undo with `-Remove`).
 
-Double-click **`start-tracker.vbs`** — it launches the app with no console
-window. A small numbered gauge appears in your tray.
+## macOS
 
-Or from a terminal (shows logs):
-
-```powershell
-.\.venv\Scripts\python.exe tray_app.py
+```bash
+chmod +x setup-macos.sh && ./setup-macos.sh
 ```
 
-## Start automatically at login
+This creates the venv and installs `requirements.txt` +
+`requirements-macos.txt` (PyObjC, which pystray's menu-bar backend needs).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install-startup.ps1
+- **Run:** `./start-tracker.command` (or double-click it in Finder). The icon
+  appears in the **menu bar**.
+- **Start at login:** `./install-startup-macos.sh` (installs a LaunchAgent;
+  undo with `--remove`).
+- The first Keychain read may show a macOS prompt to allow access — click
+  *Always Allow*.
+- If Python is from Homebrew and the window won't open, install Tk:
+  `brew install python-tk`.
+
+## Linux
+
+Install the system libraries the tray backend needs, then set up:
+
+```bash
+# Debian/Ubuntu
+sudo apt install python3-tk python3-gi gir1.2-ayatanaappindicator3-0.1
+# Fedora
+# sudo dnf install python3-tkinter python3-gobject libappindicator-gtk3
+
+chmod +x setup-linux.sh && ./setup-linux.sh
 ```
 
-To undo:
+`setup-linux.sh` creates the venv with `--system-site-packages` so it can use
+the distro's PyGObject (`python3-gi`), which the AppIndicator tray backend uses.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install-startup.ps1 -Remove
-```
+- **Run:** `./start-tracker.sh`. The icon appears in the system tray.
+- **Start at login:** `./install-startup-linux.sh` (adds an XDG autostart entry;
+  undo with `--remove`).
+- **GNOME (esp. Wayland):** tray icons require the **AppIndicator / KStatusNotifierItem**
+  shell extension. Install it from GNOME Extensions if you don't see the icon.
+- You can force a backend with `PYSTRAY_BACKEND=appindicator` (or `gtk` / `xorg`).
+
+---
 
 ## The tray menu (right-click)
 
 - **Session / Weekly limits** — every limit with its % and reset countdown.
-- **Show details…** — open the Account & Usage window (also the double-click action).
+- **Show details…** — open the Account & Usage window (also the default click).
 - **Refresh now** — poll immediately.
 - **Quit** — exit the app.
 
 ## Troubleshooting
 
-- **Grey dash icon / "Not signed in"** — open a terminal, run `claude`, sign in
-  with your subscription, then use *Refresh now*.
-- **Icon too small to read the number** — Windows shrinks tray icons; hover to
-  see the exact percentage and reset time in the tooltip.
+- **Grey dash icon / "Not signed in"** — run `claude` in a terminal, sign in
+  with your subscription, then *Refresh now*. On macOS, allow Keychain access
+  when prompted.
+- **Icon too small to read** — the OS shrinks tray icons; hover for the exact
+  percentage and reset time in the tooltip.
 - **"Rate limited (429)"** — transient; it retries automatically. Don't lower
   `POLL_SECONDS`.
+- **Linux: no icon appears** — you're likely missing the AppIndicator system
+  package or (on GNOME) the shell extension. See the Linux section.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `tray_app.py` | Tray app: icon, menu, details window, 5-min polling loop |
+| `tray_app.py` | Tray app: icon, menu, spawns the details window, polling loop |
 | `usage_client.py` | Calls the usage endpoint, normalises limits |
-| `credentials.py` | Reads local token, refreshes it when expired |
+| `credentials.py` | Reads the local token (file or macOS Keychain), refreshes it |
 | `account.py` | Reads account info (email/org/plan) from `~/.claude.json` |
-| `details_window.py` | The Account & Usage popup window (tkinter) |
-| `icon.py` | Draws the percentage-bar tray icon |
-| `start-tracker.vbs` | Silent launcher (double-click) |
-| `install-startup.ps1` | Add/remove run-at-login shortcut |
+| `details_window.py` | The Account & Usage popup window (tkinter), runs standalone |
+| `icon.py` | Draws the percentage-bar tray icon (cross-platform fonts) |
+| `requirements*.txt` | Base + `-macos` / `-linux` extras |
+| `start-tracker.*` | Launchers: `.vbs` (Win), `.command` (mac), `.sh` (Linux) |
+| `setup-*.sh` | One-time venv + dependency setup for mac/linux |
+| `install-startup.*` | Add/remove run-at-login (per OS) |

@@ -1,0 +1,10 @@
+# Linux extras (in addition to requirements.txt).
+#
+# pystray picks a tray backend at runtime. The best experience is the
+# AppIndicator backend, which relies on system PyGObject — install those via
+# your package manager (see README), and create the venv with
+# --system-site-packages so they're visible (setup-linux.sh does this).
+#
+# python-xlib below enables pystray's pure-Python XOrg backend as a fallback
+# for plain X11 sessions. Harmless if the AppIndicator backend is used instead.
+python-xlib>=0.33

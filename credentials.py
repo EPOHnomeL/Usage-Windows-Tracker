@@ -9,6 +9,7 @@ api.anthropic.com / platform.claude.com (the same hosts Claude Code uses).
 """
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import platform
@@ -76,20 +77,32 @@ USER_AGENT = f"claude-code/{CLAUDE_VERSION}"
 
 # --- raw credential blob I/O (platform-specific) ------------------------
 def _keychain_read() -> str:
-    """Return the raw JSON blob stored in the macOS login Keychain."""
+    """Return the raw JSON blob Claude Code stores in the macOS login Keychain.
+
+    Claude Code writes the item under service "Claude Code-credentials" with the
+    account set to the current user. We try that first (account-qualified, then
+    without), then the other known service names, and finally the file — which
+    is what Claude Code itself falls back to when the Keychain can't be reached
+    (e.g. over SSH, where `security` returns errSecInteractionNotAllowed).
+    """
+    user = getpass.getuser()
     for service in KEYCHAIN_SERVICES:
-        try:
-            res = subprocess.run(
-                ["security", "find-generic-password", "-s", service, "-w"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except FileNotFoundError as e:
-            raise CredentialsError("`security` CLI not found (macOS only).") from e
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip()
+        for cmd in (
+            ["security", "find-generic-password", "-s", service, "-a", user, "-w"],
+            ["security", "find-generic-password", "-s", service, "-w"],
+        ):
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            except FileNotFoundError as e:
+                raise CredentialsError("`security` CLI not found (macOS only).") from e
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip()
+
+    if CREDENTIALS_PATH.exists():  # rare on macOS, but Claude Code's own fallback
+        return CREDENTIALS_PATH.read_text(encoding="utf-8")
     raise CredentialsError(
         "No Claude credentials found in the macOS Keychain. "
-        "Sign in with `claude` first."
+        "Sign in with `claude` first (and grant Keychain access if prompted)."
     )
 
 

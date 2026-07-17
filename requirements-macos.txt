@@ -1,0 +1,3 @@
+# macOS extras (in addition to requirements.txt).
+# pystray's macOS backend uses AppKit/Foundation from PyObjC.
+pyobjc-framework-Cocoa>=10.0
