@@ -26,8 +26,8 @@ TEAL_HOVER = "#33808e"
 NAVY_HOVER = "#3c4168"
 SAND = "#e0c0a0"        # rope highlight
 
-BG = "#f5f7fa"          # light page background
-CARD = "#ffffff"        # white surfaces
+BG = "#ffffff"          # white page background (matches the logo's white)
+CARD = "#f2f4f7"        # subtle raised surfaces
 TRACK = "#e4e8ee"       # progress-bar track
 TEXT = NAVY             # primary text in brand navy
 MUTED = "#6b7280"       # secondary text
