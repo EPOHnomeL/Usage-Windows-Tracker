@@ -76,7 +76,11 @@ USER_AGENT = f"claude-code/{CLAUDE_VERSION}"
 
 
 # --- raw credential blob I/O (platform-specific) ------------------------
-def _keychain_read() -> str:
+def _credentials_path(config_dir: Path | None = None) -> Path:
+    return (config_dir / ".credentials.json") if config_dir else CREDENTIALS_PATH
+
+
+def _keychain_read(config_dir: Path | None = None) -> str:
     """Return the raw JSON blob Claude Code stores in the macOS login Keychain.
 
     Claude Code writes the item under service "Claude Code-credentials" with the
@@ -98,31 +102,33 @@ def _keychain_read() -> str:
             if res.returncode == 0 and res.stdout.strip():
                 return res.stdout.strip()
 
-    if CREDENTIALS_PATH.exists():  # rare on macOS, but Claude Code's own fallback
-        return CREDENTIALS_PATH.read_text(encoding="utf-8")
+    credentials_path = _credentials_path(config_dir)
+    if credentials_path.exists():  # rare on macOS, but Claude Code's own fallback
+        return credentials_path.read_text(encoding="utf-8")
     raise CredentialsError(
         "No Claude credentials found in the macOS Keychain. "
         "Sign in with `claude` first (and grant Keychain access if prompted)."
     )
 
 
-def _read_raw() -> str:
+def _read_raw(config_dir: Path | None = None) -> str:
     if IS_MAC:
-        return _keychain_read()
-    if not CREDENTIALS_PATH.exists():
+        return _keychain_read(config_dir)
+    credentials_path = _credentials_path(config_dir)
+    if not credentials_path.exists():
         raise CredentialsError(
-            f"Not signed in: {CREDENTIALS_PATH} not found. "
+            f"Not signed in: {credentials_path} not found. "
             "Run `claude` and sign in first."
         )
     try:
-        return CREDENTIALS_PATH.read_text(encoding="utf-8")
+        return credentials_path.read_text(encoding="utf-8")
     except OSError as e:
         raise CredentialsError(f"Could not read credentials: {e}") from e
 
 
-def load() -> Credentials:
+def load(config_dir: Path | None = None) -> Credentials:
     """Load credentials. Raises CredentialsError if not signed in."""
-    raw = _read_raw()
+    raw = _read_raw(config_dir)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -142,7 +148,8 @@ def load() -> Credentials:
     )
 
 
-def _persist(access_token: str, refresh_token: str, expires_at_ms: int) -> None:
+def _persist(access_token: str, refresh_token: str, expires_at_ms: int,
+             config_dir: Path | None = None) -> None:
     """Persist refreshed tokens where the platform keeps them.
 
     On macOS we deliberately do NOT write back to the Keychain — Claude Code
@@ -152,17 +159,17 @@ def _persist(access_token: str, refresh_token: str, expires_at_ms: int) -> None:
     if IS_MAC:
         return
     try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(_credentials_path(config_dir).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         data = {}
     oauth = data.setdefault("claudeAiOauth", {})
     oauth["accessToken"] = access_token
     oauth["refreshToken"] = refresh_token
     oauth["expiresAt"] = expires_at_ms
-    CREDENTIALS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _credentials_path(config_dir).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def refresh(creds: Credentials) -> Credentials:
+def refresh(creds: Credentials, config_dir: Path | None = None) -> Credentials:
     """Exchange the refresh token for a new access token and persist it."""
     if not creds.refresh_token:
         raise CredentialsError("Access token expired and no refresh token available.")
@@ -186,13 +193,13 @@ def refresh(creds: Credentials) -> Credentials:
     new_access = payload["access_token"]
     new_refresh = payload.get("refresh_token", creds.refresh_token)
     expires_at_ms = int(time.time() * 1000) + int(payload.get("expires_in", 43200)) * 1000
-    _persist(new_access, new_refresh, expires_at_ms)
+    _persist(new_access, new_refresh, expires_at_ms, config_dir)
     return Credentials(new_access, new_refresh, expires_at_ms)
 
 
-def get_valid() -> Credentials:
+def get_valid(config_dir: Path | None = None) -> Credentials:
     """Load credentials, refreshing if expired. Raises CredentialsError if unusable."""
-    creds = load()
+    creds = load(config_dir)
     if creds.is_expired:
-        creds = refresh(creds)
+        creds = refresh(creds, config_dir)
     return creds

@@ -20,6 +20,10 @@ open an Account & Usage panel styled like Claude Code's `/usage`:
   `~/.claude.json`, no network call).
 - **Usage** — every limit (Session 5-hour, Weekly all-models, Weekly per-model)
   with a coloured progress bar and a reset countdown.
+- **Multiple accounts** — discovers `%USERPROFILE%\.claude` and sibling
+  `%USERPROFILE%\.claude-*` profiles, showing each account separately in the
+  details window and tray menu. The tray icon remains the default profile's
+  session gauge.
 - **Refresh now** button; the window also auto-refreshes every 60s while open.
 
 The window runs as its own process, which keeps the tray icon rock-solid across
@@ -54,6 +58,14 @@ sent anywhere else.
 
 On macOS the app never writes to the Keychain — if a token needs refreshing it
 does so in memory for that run, leaving Claude Code's Keychain item untouched.
+
+To monitor an explicit set of profile directories instead of automatic
+discovery, set `CLAUDE_USAGE_CONFIG_DIRS` before launching. Separate Windows
+paths with semicolons:
+
+```powershell
+$env:CLAUDE_USAGE_CONFIG_DIRS = 'C:\Users\lemon\.claude;C:\Users\lemon\.claude-jvorster63'
+```
 
 ## ⚠️ Please read: terms-of-service note
 
@@ -161,7 +173,8 @@ the distro's PyGObject (`python3-gi`), which the AppIndicator tray backend uses.
 | `tray_app.py` | Tray app: icon, menu, spawns the details window, polling loop |
 | `usage_client.py` | Calls the usage endpoint, normalises limits |
 | `credentials.py` | Reads the local token (file or macOS Keychain), refreshes it |
-| `account.py` | Reads account info (email/org/plan) from `~/.claude.json` |
+| `account.py` | Reads account info (email/org/plan) from each profile's `.claude.json` |
+| `profiles.py` | Discovers Claude Code profile directories for multi-account monitoring |
 | `details_window.py` | The Account & Usage popup window (tkinter), runs standalone |
 | `icon.py` | Draws the percentage-bar tray icon (cross-platform fonts) |
 | `requirements*.txt` | Base + `-macos` / `-linux` extras |

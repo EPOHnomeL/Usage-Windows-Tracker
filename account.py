@@ -42,10 +42,11 @@ def _plan_label(org_type: str | None, seat_tier: str | None) -> str | None:
     return None
 
 
-def load() -> Account:
+def load(config_dir: Path | None = None) -> Account:
     """Best-effort account load. Never raises — returns blanks on any problem."""
+    config_path = (config_dir / ".claude.json") if config_dir else CONFIG_PATH
     try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return Account()
 

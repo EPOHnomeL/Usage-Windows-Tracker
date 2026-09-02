@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
@@ -81,9 +82,9 @@ def _label_for(item: dict) -> str:
     return base
 
 
-def fetch() -> Usage:
+def fetch(config_dir: Path | None = None) -> Usage:
     """Fetch current usage. Raises UsageError / CredentialsError on failure."""
-    creds = credentials.get_valid()
+    creds = credentials.get_valid(config_dir)
     headers = {
         "Authorization": f"Bearer {creds.access_token}",
         "anthropic-beta": "oauth-2025-04-20",
@@ -97,7 +98,7 @@ def fetch() -> Usage:
 
     if resp.status_code == 401:
         # Token may have just gone stale; force a refresh and retry once.
-        creds = credentials.refresh(credentials.load())
+        creds = credentials.refresh(credentials.load(config_dir), config_dir)
         headers["Authorization"] = f"Bearer {creds.access_token}"
         resp = requests.get(USAGE_URL, headers=headers, timeout=20)
 

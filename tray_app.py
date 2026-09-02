@@ -21,6 +21,8 @@ import pystray
 from pystray import Menu, MenuItem
 
 import credentials
+import account
+import profiles
 import usage_client
 from icon import make_icon
 
@@ -45,8 +47,10 @@ else:
 class TrayApp:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._usage: usage_client.Usage | None = None
+        self._results: list[tuple[profiles.Profile, account.Account,
+                                  usage_client.Usage | None, str]] = []
         self._status = "Starting…"
+        self._active_key = profiles.load_active_key()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._win_proc: subprocess.Popen | None = None
@@ -61,19 +65,29 @@ class TrayApp:
     # ---- menu -----------------------------------------------------------
     def _build_menu(self) -> Menu:
         with self._lock:
-            usage, status = self._usage, self._status
-        items: list = [MenuItem(self._header_text(usage, status), None, enabled=False),
+            results, status = self._results, self._status
+        items: list = [MenuItem(self._header_text(results, status), None, enabled=False),
                        Menu.SEPARATOR]
-        if usage:
-            for l in usage.limits:
-                text = f"{l.label}: {l.percent:.0f}%"
-                if l.resets_in_text:
-                    text += f"  ({l.resets_in_text})"
-                items.append(MenuItem(text, None, enabled=False))
+        if results:
+            for profile, acct, usage, error in results:
+                name = acct.email or profile.config_dir.name
+                items.append(MenuItem(name, None, enabled=False))
+                if usage:
+                    for limit in usage.limits:
+                        text = f"  {limit.label}: {limit.percent:.0f}%"
+                        if limit.resets_in_text:
+                            text += f"  ({limit.resets_in_text})"
+                        items.append(MenuItem(text, None, enabled=False))
+                else:
+                    items.append(MenuItem(f"  {error}", None, enabled=False))
         else:
             items.append(MenuItem(status, None, enabled=False))
         items += [
             Menu.SEPARATOR,
+            MenuItem("Active account", Menu(*[
+                self._profile_menu_item(profile, acct)
+                for profile, acct, _, _ in results
+            ])) if results else MenuItem("Active account", None, enabled=False),
             MenuItem("Show details…", self._on_show, default=True),
             MenuItem("Refresh now", self._on_refresh_now),
             MenuItem("Quit", self._on_quit),
@@ -81,9 +95,11 @@ class TrayApp:
         return Menu(*items)
 
     @staticmethod
-    def _header_text(usage, status) -> str:
-        if usage and usage.primary_percent is not None:
-            return f"Session: {usage.primary_percent:.0f}%"
+    def _header_text(results, status) -> str:
+        session_values = [usage.primary_percent for _, _, usage, _ in results
+                          if usage and usage.primary_percent is not None]
+        if session_values:
+            return "Sessions: " + " / ".join(f"{value:.0f}%" for value in session_values)
         return status
 
     # ---- actions --------------------------------------------------------
@@ -101,21 +117,49 @@ class TrayApp:
     def _on_refresh_now(self, icon, item) -> None:
         self._wake.set()
 
+    def _is_active(self, profile: profiles.Profile) -> bool:
+        if self._active_key:
+            return profile.key == self._active_key
+        # Before the first selection, the normal .claude profile is active.
+        return profile.config_dir.name == ".claude"
+
+    def _on_select_profile(self, profile: profiles.Profile) -> None:
+        self._active_key = profile.key
+        profiles.save_active(profile)
+        with self._lock:
+            results = self._results
+        self._set_results(results)
+
+    def _profile_menu_item(self, profile: profiles.Profile, acct: account.Account) -> MenuItem:
+        """Build a two-argument pystray callback for one profile selector."""
+        def select(_icon, _item) -> None:
+            self._on_select_profile(profile)
+
+        return MenuItem(
+            acct.email or profile.config_dir.name,
+            select,
+            checked=lambda _item: self._is_active(profile),
+            radio=True,
+        )
+
     def _on_quit(self, icon, item) -> None:
         self._stop.set()
         self._wake.set()
         icon.stop()
 
     # ---- state ----------------------------------------------------------
-    def _set_usage(self, usage: usage_client.Usage) -> None:
+    def _set_results(self, results) -> None:
         with self._lock:
-            self._usage = usage
-        pct = usage.primary_percent
+            self._results = results
+        active = next(((profile, usage) for profile, _, usage, _ in results
+                       if usage and self._is_active(profile)), None)
+        primary = active[1] if active else next((usage for _, _, usage, _ in results if usage), None)
+        pct = primary.primary_percent if primary else None
         self.icon.icon = make_icon(pct)
         parts = [APP_NAME]
         if pct is not None:
             parts.append(f"- Session {pct:.0f}%")
-        s = usage.session
+        s = primary.session if primary else None
         if s and s.resets_in_text:
             parts.append(f"({s.resets_in_text})")
         self.icon.title = " ".join(parts)
@@ -124,7 +168,7 @@ class TrayApp:
 
     def _set_error(self, message: str, *, signed_out: bool = False) -> None:
         with self._lock:
-            self._usage = None
+            self._results = []
             self._status = message
         self.icon.icon = make_icon(None, error=True)
         prefix = "Not signed in" if signed_out else "Error"
@@ -137,7 +181,18 @@ class TrayApp:
         while not self._stop.is_set():
             delay = POLL_SECONDS
             try:
-                self._set_usage(usage_client.fetch())
+                results = []
+                for profile in profiles.discover():
+                    acct = account.load(profile.config_dir)
+                    try:
+                        usage = usage_client.fetch(profile.config_dir)
+                        error = ""
+                    except (credentials.CredentialsError, usage_client.UsageError) as e:
+                        usage, error = None, str(e)
+                    results.append((profile, acct, usage, error))
+                if not results:
+                    raise credentials.CredentialsError("No Claude profiles found.")
+                self._set_results(results)
             except credentials.CredentialsError as e:
                 self._set_error(str(e), signed_out=True)
                 delay = ERROR_RETRY_SECONDS

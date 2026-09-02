@@ -45,7 +45,8 @@ Anthropic's own hosts.
 ### Account domain
 
 - **Account** — locally-cached account info (display name, email, organization,
-  plan, auth method, extra-usage flag) read from `~/.claude.json` under
+  plan, auth method, extra-usage flag) read from each profile's
+  `CLAUDE_CONFIG_DIR/.claude.json` under
   `oauthAccount`. Read-only, no network call. Modelled by the `Account`
   dataclass in `account.py`.
 - **Plan** — the friendly subscription tier label (Claude Pro / Claude Max /
@@ -60,7 +61,7 @@ Anthropic's own hosts.
   `expires_at_ms` read from local storage. Modelled by the `Credentials`
   dataclass in `credentials.py`.
 - **Credential store** — where the token lives, per platform: the JSON file
-  `~/.claude/.credentials.json` on Windows/Linux; the login **Keychain** on
+  `CLAUDE_CONFIG_DIR/.credentials.json` on Windows/Linux; the login **Keychain** on
   macOS (read via the `security` CLI, never written back to).
 - **Refresh** — exchanging the refresh token for a new access token at the
   refresh URL, done automatically when the token is expired (or after a 401).

@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from tkinter import ttk
 import webbrowser
 from datetime import datetime
+from pathlib import Path
 
 import fonts
+import profiles
 from account import Account
 from icon import _bar_color
+from profiles import Profile
 from usage_client import Usage
 
 # ---- Yknot brand palette (light mode, matching y-knot.io) --------------
@@ -57,6 +61,8 @@ class DetailsWindow:
         self._win: tk.Toplevel | None = None
         self._body: tk.Frame | None = None
         self._footer_label: tk.Label | None = None
+        self._account_picker: ttk.Combobox | None = None
+        self._picker_profiles: dict[str, Profile] = {}
         self._logo_img = None  # keep a ref or Tk garbage-collects the image
         self._last: tuple = ()  # cache so we can rerender on show
 
@@ -105,6 +111,10 @@ class DetailsWindow:
         top.pack(fill="x", padx=18, pady=(6, 2))
         tk.Label(top, text="Account & Usage", bg=BG, fg=NAVY,
                  font=(FONT_DISPLAY, 15, "bold")).pack(side="left")
+        self._account_picker = ttk.Combobox(top, state="readonly", width=22,
+                                            font=(FONT, 9))
+        self._account_picker.pack(side="right")
+        self._account_picker.bind("<<ComboboxSelected>>", self._on_account_selected)
         tk.Frame(win, bg=TEAL, height=2).pack(fill="x", padx=18, pady=(5, 2))
 
         self._body = tk.Frame(win, bg=BG)
@@ -166,20 +176,24 @@ class DetailsWindow:
         win.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     # ---- rendering ------------------------------------------------------
-    def update(self, usage: Usage | None, acct: Account, status: str,
+    def update(self, results: list[tuple[Profile, Account, Usage | None, str]],
                last_updated: datetime | None) -> None:
         """Cache latest data; rerender if the window is currently visible."""
-        self._last = (usage, acct, status, last_updated)
+        self._last = (results, last_updated)
         if self._win is not None and self._win.state() != "withdrawn":
-            self._render(usage, acct, status, last_updated)
+            self._render(results, last_updated)
 
-    def _render(self, usage, acct: Account, status, last_updated) -> None:
+    def _render(self, results, last_updated) -> None:
         body = self._body
         assert body is not None
         for child in body.winfo_children():
             child.destroy()
 
-        self._section(body, "ACCOUNT")
+        active_key = profiles.load_active_key()
+        selected = next((result for result in results if result[0].key == active_key), results[0])
+        self._set_picker(results, selected[0])
+        profile, acct, usage, status = selected
+        self._section(body, "ACCOUNT", pady_top=2)
         self._kv(body, "Auth method", acct.auth_method or "-")
         self._kv(body, "Email", acct.email or "-")
         self._kv(body, "Organization", acct.organization or "-")
@@ -201,6 +215,30 @@ class DetailsWindow:
                     text=f"Updated {last_updated.strftime('%H:%M:%S')}")
             else:
                 self._footer_label.config(text="")
+
+    def _set_picker(self, results, selected: Profile) -> None:
+        """Refresh the account dropdown without triggering a selection event."""
+        if self._account_picker is None:
+            return
+        self._picker_profiles = {
+            acct.email or profile.config_dir.name: profile
+            for profile, acct, _, _ in results
+        }
+        labels = list(self._picker_profiles)
+        self._account_picker["values"] = labels
+        label = next((name for name, profile in self._picker_profiles.items()
+                      if profile.key == selected.key), labels[0])
+        self._account_picker.set(label)
+
+    def _on_account_selected(self, _event=None) -> None:
+        if self._account_picker is None:
+            return
+        profile = self._picker_profiles.get(self._account_picker.get())
+        if profile is None:
+            return
+        profiles.save_active(profile)
+        if self._last:
+            self._render(*self._last)
 
     def _section(self, parent, text, *, pady_top=2) -> None:
         tk.Label(parent, text=text, bg=BG, fg=HEADING,
@@ -250,6 +288,8 @@ def run_standalone() -> None:
     avoids the pystray/tkinter main-thread conflict on macOS and Linux.
     """
     import account as account_mod
+    import credentials
+    import profiles
     import usage_client
 
     root = tk.Tk()
@@ -258,12 +298,18 @@ def run_standalone() -> None:
     win = DetailsWindow(root, on_refresh=lambda: None, on_close=root.quit)
 
     def reload() -> None:
-        try:
-            usage = usage_client.fetch()
-            status = ""
-        except Exception as e:  # CredentialsError, UsageError, network, etc.
-            usage, status = None, str(e)
-        win.update(usage, account_mod.load(), status, datetime.now())
+        results = []
+        for profile in profiles.discover():
+            acct = account_mod.load(profile.config_dir)
+            try:
+                usage, status = usage_client.fetch(profile.config_dir), ""
+            except (credentials.CredentialsError, usage_client.UsageError) as e:
+                usage, status = None, str(e)
+            results.append((profile, acct, usage, status))
+        if not results:
+            results.append((Profile(config_dir=Path.home()), Account(), None,
+                            "No Claude profiles found."))
+        win.update(results, datetime.now())
 
     # Wire the Refresh button to a real reload.
     win._on_refresh = reload
